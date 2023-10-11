@@ -1,9 +1,4 @@
-"""
-Script for generating lokup tables at a given wavelength.
-The returned tables are shaped like: (sza, tau, cre, phi, uzen)
-for each solar zenith angle, optical depth, cloud effective radius, relative
-azimuth, and viewing zenith angle in the specified ranges.
-"""
+""" """
 #from sbdart_info import default_params
 from pathlib import Path
 import numpy as np
@@ -15,21 +10,6 @@ from multiprocessing import Pool
 from krttdkit.acquire.sbdart import dispatch_sbdart, parse_iout
 import krttdkit.visualize.guitools as gt
 
-"""
-For each wavelength, optical depth, and effective radius in the provided
-lists, this method provides a 2d array of spectral radiances expected for
-the viewing geometries specified by parameters (nphi, phi, nzen, uzen)
-
-spectral radiances: (vza, raa, wl, aod)
-
-:@param wl: Wavelength of the lookup table in um
-:@param szas: List of solar zenith angles in degrees
-:@param taus: List of optical depths
-:@param cres: List of cloud effective radii
-:@param sbdart_args: dict of SBDART arguments (If wlinf, wlsup, wlinc,
-    tcloud, sza, zcloud, or nre are in the provided dict, they will be
-    overwritten.)
-"""
 def _mp_sbdart(args):
     """
     Run SBDART given a temporary directory, and a dict of SBDART style
@@ -65,9 +45,50 @@ def _mp_sbdart(args):
 
 
 def srad_over_fields(
-        iout:int, fields:str, coords:list, sbdart_args:dict, tmp_dir_parent:Path,
-        description="", workers:int=3, zarr_file:Path=None,
-        ):
+        fields:str, coords:list, tmp_dir_parent:Path, sbdart_args:dict={},
+        zarr_file:Path=None, sflux_file:Path=None, description="",
+        workers:int=3):
+    """
+    Method to calculate spectral radiance (and layerwise spectral fluxes)
+    by iterating over one or more SBDART parameters, in addition to the
+    three default coordinates.
+
+    This method is heavily multiprocessed, and can handle lookup tables that
+    are larger than the available memory! If you provide a ".zip" zarr_file
+    path, the compressed array will be updated on-disc as the processes
+    return.
+
+    The lookup table will start with dimensions corresponding to the order of
+    SBDART parameter names in the fields list. Each dimension will have an
+    element for each coordinate associated with it.
+
+    sbdart args is a dictionary of arguments to pass to sbdart, which determine
+    radiative characteristics and aspects of the returned lookup table size.
+
+    The default coordinates are always the last 3 in the returned lookup table,
+    and follow the order...
+     1: viewing zenith angle (uzen, nzen)
+     2: relative azimuth angle (phi, nphi)
+     3: wavelength (wlinf, wlsup, wlinc)
+
+    :@param fields: List of string names of SBDART parameters corresponding to
+        the coordinate values in the same-index element of the "coords" list.
+    :@param coords: list of lists enumerating argument values for each field.
+        The length of each coordinate list is identical to the size of the
+        corresponding dimension in the returned lookup table.
+    :@param tmp_dir_parent: Directory where hashed temporary directories can
+        be written to during SBDART dispatch.
+    :@param sbdart_args: Dictionary mapping SBDART argument strings to user-
+        -selected values. See deafults in krttdkit.acquire.sbdart docs.
+    :@param zarr_file: Path to a zip file to write the zarr archive to. If the
+        lookup table would be too big to keep in memory, provide a zarr file
+        and it will be offloaded to the disc as each increment is calculated!
+    :@param sflux_file: pkl path where fluxes can be written with their labels.
+    :@param description: String description of the LUT run to include in the
+        returned (stored) zarr grid attributes.
+    :@param workers: Number of parallel processes to dispatch while calculating
+        lookup tables.
+    """
     assert len(fields)==len(coords)
     dims = tuple(len(f) for f in fields)
     # Get a list of all argument combinations in argument space, ie all
@@ -85,7 +106,7 @@ def srad_over_fields(
                 for x in no_repeat_rint]
     # Add default args. At least as of Python 3.10.9, the rightmost
     # elements in a dict expansion get priority.
-    full_args = (({**sbdart_args, "iout":iout, **fields_coords[i]},
+    full_args = (({**sbdart_args, "iout":5, **fields_coords[i]},
                   tmp_dirs[i])
             for i in range(len(fields_coords)))
 
@@ -96,125 +117,109 @@ def srad_over_fields(
     srad = None
     final_shape = None
     sflux_labels = None
-    fluxes = []
-    with Pool(workers) as pool:
-        for sb_in,sb_out in pool.imap(_mp_sbdart, full_args):
-            arg_combo,_ = sb_in
-            print(f"Appending "+" ".join(
-                [f"{f}:{arg_combo[f]}" for f in fields]))
-            # Collect spectral radiances and spectral fluxes
-            tmp_srad = sb_out["srad"]
-            fluxes.append(sb_out["sflux"])
-            if sbdart_coords is None:
-                # Get the labels and coordinate arrays calculated by SBDART
-                labels_coords = [(k,sb_out[k]) for k in ("uzen", "phi", "wl")]
-                sflux_labels = sb_out["sflux_labels"]
-                # Determine the ultimate lookup table shape
-                final_shape = tuple([
-                        *arg_space.shape,
-                        *[len(coords) for label, coords in labels_coords],
-                        ])
-                # Chunk each output array separately
-                chunk_shape = tuple([
-                        *[1 for i in range(len(arg_space.shape))],
-                        *final_shape[:len(labels_coords)]
-                        ])
-                # Create the zarr array, using the storage path if provided.
-                store = zarr.ZipStore(zarr_file, mode="w")
-                srad = zarr.create(
-                        shape=final_shape,
-                        chunks=chunk_shape,
-                        dtype="f16",
-                        store=store,
-                        )
-            srad.oindex[*coord_idxs.pop(0)] = tmp_srad
-    sb_labels, sb_coords = map(list, zip(*labels_coords))
-    srad.attrs = {
-          "srad_coords":coords + sb_coords,
-          "coord_labels":fields + sb_labels,
-          "sfluxes":fluxes,
-          "sflux_labels":sflux_labels,
-          "args":sbdart_args,
-          "desc":description,
-          }
-    return srad
-
-
-
-def srad_over_field(
-        field_label:str, args:list, sbdart_args:dict, tmp_dir:Path, sza:float,
-        description="", print_stdout=False):
-    """
-    Dispatches SBDART to solve for spectral radiance and spectral fluxes
-    at a series of boundary layer aerosol optical depths ("tbaer").
-    """
-    luts = []
-    for a in args:
-        sbdart_args[field_label] = a
-        sb_out=dispatch_sbdart(sbdart_args, tmp_dir)
-        tmp_lut = parse_iout(iout_id=5, sb_out=sb_out, print_stdout=False)
-        luts.append((a, tmp_lut))
-
-    coords, luts = zip(*luts)
-    lut = np.stack([L["srad"] for L in luts], axis=-1)
-    # spectral radiances: (vza, raa, wl, coord)
-    axes = [(l,luts[0].get(l)) for l in ("uzen", "phi", "wl")]
-    axes += (field_label, coords)
-    clabels,coords = zip(*axes)
-    out = {
-            "srad":lut,
-            "srad_coords":coords,
-            "coord_labels":clabels,
-            "sfluxes":[L["sflux"] for L in luts],
-            "sflux_labels":[luts[0]["sflux_labels"]],
-            "args":sbdart_args,
-            "desc":description,
-            }
+    sfluxes = []
+    # Create the zarr array, using the storage path if provided.
+    store = zarr.ZipStore(zarr_file.as_posix(),mode="w") if zarr_file else None
+    try:
+        with Pool(workers) as pool:
+            for sb_in,sb_out in pool.imap(_mp_sbdart, full_args):
+                arg_combo,_ = sb_in
+                print(f"Appending "+" ".join(
+                    [f"{f}:{arg_combo[f]}" for f in fields]))
+                # Collect spectral radiances and spectral fluxes
+                tmp_srad = sb_out["srad"]
+                sfluxes.append(sb_out["sflux"])
+                if srad is None:
+                    # Get the labels and coordinate arrays calculated by SBDART
+                    labels_coords = [(k,sb_out[k]) for k in
+                                     ("uzen", "phi", "wl")]
+                    sflux_labels = sb_out["sflux_labels"]
+                    ## Determine the ultimate lookup table shape. Ultimately,
+                    ## there is an extra hanging dimension for features.
+                    final_shape = tuple([
+                            *arg_space.shape,
+                            *[len(coords) for label, coords in labels_coords],
+                            1,
+                            ])
+                    # Chunk each output array separately
+                    chunk_shape = tuple([
+                            *[1 for i in range(len(arg_space.shape))],
+                            *final_shape[:len(labels_coords)]
+                            ])
+                    srad = zarr.creation.create(
+                            shape=final_shape,
+                            chunks=chunk_shape,
+                            store=store,
+                            mode="w",
+                            dtype="f16",
+                            )
+                    # Add all the general information to the attributes
+                    sb_labels, sb_coords = map(list, zip(*labels_coords))
+                    srad.attrs.update({
+                          "flabels":["srad"],
+                          "clabels":fields + sb_labels,
+                          "coord_arrays":list(map(list, coords + sb_coords)),
+                          "meta":{
+                              "sbdart_args":dict(sbdart_args),
+                              "desc":description,
+                              },
+                          })
+                # Update the array and save it to storage
+                srad.oindex[*coord_idxs.pop(0)] = np.expand_dims(tmp_srad,-1)
+                if not store is None:
+                    store.flush()
+        sfluxes_all = (sflux_labels, sfluxes)
+    except Exception as E:
+        raise E
+    finally:
+        if not zarr_file is None:
+            store.close()
+    if not sflux_file is None:
+        pkl.dump(sfluxes_all, sflux_file.open("wb"))
+    return srad, sfluxes_all
 
 if __name__=="__main__":
     tmp_dir = Path("buffer/sbdart")
-    pkl_path = Path("buffer/lut.pkl")
-    zarr_file = Path("data/aerosol_lut.zip")
+    #zarr_file = Path("data/aerosol_lut.zip")
+    #flux_file = Path("data/aerosol_sfluxes.pkl")
+    zarr_file = Path("buffer/tmp_lut.zip")
+    flux_file = Path("buffer/tmp_flux.pkl")
     description = "Spectral response of several boundary layer AODs in DESIS' wave range; no atmospheric scattering (since L2 data); fixed solar zenith of 23.719deg; rural aerosol types; default aerosol profile"
 
     """
-    The below dictionaries are sufficient for generating a lookup with shape:
-    (sza, tau, cre, uzen, phi)
     """
     sbdart_args = {
-            "iout":5,
             "idatm":2, # Mid-latitude summer
             "pbar":0, # no atmospheric scattering or absorption
-            "isalb":7, # Ocean water
-            #"sza":23.719,
-            #"imoma":3, # henyey-greenstein if default 3
-
-            #"iaer":1, # rural aerosol
-            #"iaer":2, # urban aerosol
-            #"iaer":3, # oceanic aerosol
-            #"iaer":4, # tropo aerosol
-
+            #"isalb":7, # Ocean water
+            "isalb":0, # User specified albedo
+            #"albcon":0, # No reflection
             "nphi":8,
             "phi":"0,180",
             "nzen":20,
             "uzen":"0,85",
             "wlinf":.4,
             "wlsup":1.,
-            "wlinc":0.002551,
-            #"btemp":292,
-            #"zcloud":2
+            "wlinc":0.005,
+            #"wlinc":0.1,
+            "iaer":1,
             }
-    print(srad_over_fields(
+    """
+    Iterate over solar zenith angle, boundary layer aerosol optical depth,
+    and aerosol types
+    """
+    srad, sfluxes = srad_over_fields(
             zarr_file=zarr_file,
-            fields=["sza", "tbaer", "iaer"],
+            sflux_file=flux_file,
+            #fields=["sza", "tbaer", "iaer"],
+            fields=["sza", "tbaer", "albcon"],
             coords=[list(range(0, 70, 5)),
-                  [i*0.025 for i in range(10)],
-                  list(range(1,5))],
-            iout=5,
+                  [0, 0.05, 0.01, 0.25, 0.5, 0.75, 1, 2, 5, 10],
+                  [0, .2,.4,.6,.8,1]],
+            #coords = [[0], [0, .005, .05, .5], [1, 3]],
             workers=10,
             sbdart_args=sbdart_args,
             tmp_dir_parent=tmp_dir,
             description=description,
-            ).shape)
-
-    #'''
+            )
+    print(srad.shape)

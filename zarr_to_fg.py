@@ -49,10 +49,6 @@ def zarr_to_fg(Z:zarr.core.Array, bands:list=None,
             meta=dict(meta)
             )
 
-def do_3d_fourier(Z:zarr.core.Array):
-    F = np.fft.fftn(np.asarray(Z))
-    print(F.shape)
-
 def get_zarr_generator(Z, hrange=(None,None), vrange=(None,None), bands=None):
     """
     """
@@ -80,6 +76,7 @@ def make_video(array_generator, frames_dir:Path, video_path:Path,
         for p in paths:
             p.unlink()
     return video_path
+
 def cycle(F:FeatureGrid, array_generator, dont_drop):
     """
     Drop the first-loaded band outside the window and add the next band
@@ -111,6 +108,14 @@ if __name__=="__main__":
             fg.add_data(*next(zarr_gen)).drop_data(fg.labels[0]).data(
                 f"colorize logfft2d {fg.labels[-1]}")
             for i in range(Z.shape[-1]-window-1))
+    fg.add_recipe(
+            "truecolor",
+            Recipe(
+                args=[f"norm256 histgauss b{b:03}" for b in (104, 59, 28)],
+                func=lambda r,g,b:np.dstack([r,g,b]),
+                name="truecolor",
+                desc="Gaussian histogram-matched truecolor RGB"
+                ))
     video = make_video(
             array_generator=data_series,
             frames_dir=Path("buffer"),
@@ -120,69 +125,3 @@ if __name__=="__main__":
             framerate=15,
             keep_frames=False,
             )
-    #do_3d_fourier(Z)
-    exit(0)
-    #offset = (500,300)
-    #size = (1080//3, 1920//3)
-    fg = zarr_to_fg(
-            Z=Z,
-            #bands=list(range(1, 236, 3)),
-            vrange=(offset[0],offset[0]+size[0]),
-            hrange=(offset[1],offset[1]+size[1]),
-            )
-    image_dir = Path("figures/animation")
-    border_mask = fg.data(fg.labels[0])<-1
-    fg.add_recipe(
-            "truecolor",
-            Recipe(
-                args=[f"norm256 histgauss b{b:03}" for b in (104, 59, 28)],
-                func=lambda r,g,b:np.dstack([r,g,b]),
-                name="truecolor",
-                desc="Gaussian histogram-matched truecolor RGB"
-                ))
-    #tc = np.dstack([enh.norm_to_uint(fg.data(f"b{b:03}"),256,np.uint8)
-    #                for b in (104,59,28)])
-    #tc[border_mask] = np.average(tc[np.where(np.logical_not(border_mask))])
-    gt.quick_render(fg.data("truecolor"))
-    #'''
-    width = 40
-    #for i in range(back, len(fg.labels)-forward):
-    for i in range(width, len(fg.labels)-width):
-        '''
-        R = fg.data(f"norm256 histgauss b{i-width+1:03}")
-        G = fg.data(f"norm256 histgauss b{i:03}")
-        B = fg.data(f"norm256 histgauss b{i+width+1:03}")
-        RGB = np.dstack([R,G,B])
-        print(RGB.shape)
-        #gt.quick_render(RGB)
-        '''
-        #'''
-        diff = fg.data(f"b{i+1+width:03}") - \
-                fg.data(f"b{i+1-width:03}")
-        R = enh.norm_to_uint(np.abs(diff), 256, np.uint8)
-        B = np.copy(R)
-        R[diff<=0] = 0
-        B[diff>=0] = 0
-        G = np.zeros_like(R)
-        RGB = np.dstack((R,G,B))
-        RGB = gt.label_at_index(
-                RGB, (550,300),
-                f"{fg.info(f'b{i+1:03}')['wl']}nm, w{width}nm")
-        gp.generate_raw_image(
-                RGB, image_dir.joinpath(f"desis-diff_w{width}_{i+1:03}.png"))
-    '''
-    for i in range(len(fg.labels)):
-        idxs = (
-                (width*2+i)%len(fg.labels),
-                (width+i)%len(fg.labels),
-                i%len(fg.labels),
-                )
-        bands = [f"{idx+1:03}" for idx in idxs]
-        image_fname = f"desis_{'-'.join(bands)}.png"
-        rgb = np.dstack([fg.data(f"norm256 b{b}") for b in bands])
-        rgb[border_mask] = 0
-        gp.generate_raw_image(
-                RGB=rgb, image_path=image_dir.joinpath(Path(image_fname)))
-    '''
-    #fg.get_pixels("colorize 13", show=True)
-    #'''

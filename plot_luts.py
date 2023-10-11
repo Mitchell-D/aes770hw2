@@ -12,3 +12,6 @@ from krttdkit.operate import enhance as enh
 from krttdkit.operate import Recipe
 
 if __name__=="__main__":
+    aero_lut_path = Path("data/aerosol_lut_backup.zip")
+    L = zarr.group(store=aero_lut_path)
+    print(np.array(L))

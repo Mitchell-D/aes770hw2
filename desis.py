@@ -173,6 +173,7 @@ def get_desis_spectral(spectral_tif:Path, zarr_file:Path,
             new_info.append(info[idx])
         Z.attrs["meta"] = meta
         Z.attrs["info"] = info
+        Z.attrs["labels"] = bands
         #zarr.save(zarr_file.as_posix(), Z)
 
 def get_desis_granule(files:list, zarr_file:Path, bands:list):
