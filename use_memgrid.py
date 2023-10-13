@@ -1,9 +1,9 @@
-from pathlib import Path
+import pickle as pkl
 import zarr
 import numpy as np
+from pathlib import Path
 from typing import Callable
-
-#from sklearn.cluster import KMeans
+from matplotlib import pyplot as plt
 
 from krttdkit.operate import enhance as enh
 from krttdkit.operate import recipe_book as rb
@@ -48,17 +48,6 @@ def rgb_dchist(X:np.array, nbins:int=256, alt=False):
            ]
     return np.dstack(list(map( rb.gaussnorm, RGB)))
 
-
-
-def _none(mg:HyperGrid, apply_across):
-    total_mean = np.zeros_like(HG.shape)
-    total_stdev =None
-    for i in range(len(HG.labels)):
-        total_mean += HG.data
-    for i in range(len(HG.labels)-window):
-        img_template = Path(
-                f"buffer/desis_17_histdiff/histdiff-3-nogreen_{i:03}.png")
-
 def convert_zarr_fg_to_hg(in_store:Path, out_store:Path):
     ## Add singular feature dimension
     Z = zarr.open(in_store, mode="r")
@@ -99,29 +88,113 @@ def gen_hg_tiles(hg:HyperGrid, tile:dict):
     combos = ((c,hg.subgrid(**dict(zip(t_labels, c)))) for c in combos)
     return combos
 
-def cloud_mask(hg:HyperGrid):
+def cloud_mask(hg:HyperGrid, thresh=.1):
     ndwi = (hg.data(wl=550)-hg.data(wl=850)) / \
             (hg.data(wl=550)+hg.data(wl=850))
-    gt.quick_render(enh.linear_gamma_stretch(np.squeeze(ndwi)))
+    wmask = np.squeeze(ndwi) > thresh
+    return wmask
+
+def get_rgb(hg, rgb_wls:tuple):
+    rgb = [np.squeeze(hg.data(wl=wl)) for wl in rgb_wls]
+    return enh.linear_gamma_stretch(np.dstack(rgb))
+
+def plot_stats(hg:np.array, mask:np.array, model:np.array=None,
+               model_domain:np.array=None):
+    """
+    Plots mean value and standard deviation of HyperGrid data
+    where masked values are True
+    """
+    valid = np.squeeze(hg._data[np.where(mask)])
+    name = "Spectral Radiance"
+    means = np.average(valid, axis=0)
+    stdevs = np.std(valid, axis=0)
+    wls = hg.coords("wl").coords
+    plt.plot(wls, means, label="Reflectance $\mu$",)
+    plt.plot(wls, stdevs, label="Reflectance $\sigma$",)
+    if not model is None:
+        plt.plot(model_domain, model,
+                 label="Model reflectance over ocean (no aerosol)")
+    plt.xlim((wls[0],wls[-1]))
+    plt.title("Model vs observed over-ocean spectral response")
+    plt.xlabel("Wavelength (nm)")
+    plt.ylabel("Reflectance")
+    plt.grid()
+    plt.legend()
+    plt.show()
+
+def get_model_ref(flux_file:Path):
+    """ returns ocean reflectance """
+    flabels, fluxes = pkl.load(flux_file.open("rb"))
+    # Just use the first one since sfc reflectance should be the same.
+    fluxes = fluxes[0]
+    sfcup, sfcdn = fluxes[-2:]
+    wl = fluxes[0]
+    sfcref = (sfcup/sfcdn)
+    return wl, sfcref
+
+def plot_hists(arrays:list, labels:list=None, nbins=256):
+    hists,coords = zip(*[enh.get_nd_hist([a], bin_counts=nbins)
+                         for a in arrays])
+    if labels is None:
+        labels = [None for i in range(len(coords))]
+    for i in range(len(coords)):
+        plt.plot(np.squeeze(coords[i]), hists[i], label=labels[i])
+    plt.legend()
+    plt.title("DESIS reflectance histograms over ocean water")
+    plt.ylabel("Frequency")
+    plt.xlabel("Reflectance")
+    plt.show()
 
 if __name__=="__main__":
-    #zarr_path = Path("data/DESIS-HSI-L2A-DT0865788448_014-20230607T153935.zarr")
-    #zarr_path = Path("data/DESIS-HSI-L2A-DT0865788448_015-20230607T153935.zarr")
-    #zarr_path = Path("data/DESIS-HSI-L2A-DT0865788448_016-20230607T153935.zarr")
-    #zarr_path = Path("data/DESIS-HSI-L2A-DT0865788448_017-20230607T153935.zarr")
-    new_path = Path("buffer/tmp_hg.zip")
+    #hg_path = Path("data/DESIS-HSI-L2A-DT0865788448_017-20230607T153935.zip")
+    #hg_path = Path("data/DESIS-HSI-L2A-DT0865788448_016-20230607T153935.zip")
+    #hg_path = Path("data/DESIS-HSI-L2A-DT0865788448_015-20230607T153935.zip")
+    #hg_path = Path("data/DESIS-HSI-L2A-DT0865788448_014-20230607T153935.zip")
+    hg_path = Path("data/DESIS-HSI-L2A-DT0865788448_017-20230607T153935.zip")
 
     hrange=(400,1000)
     vrange=(400,1000)
-    window = 12
-    bins = 1024
-    hg = HyperGrid.from_store(new_path).subgrid(x=IntAxis(hrange),
-                                                y=IntAxis(vrange))
-    cloud_test(hg)
+
+    hg = HyperGrid.from_store(hg_path)
+    hg = hg.subgrid(x=IntAxis(hrange), y=IntAxis(vrange))
+
+    """ show a truecolor with water mask """
+    truecolor = get_rgb(hg,(640, 550, 460))
+    m_water = cloud_mask(hg)
+    tc_water = truecolor
+    tc_water[np.where(np.logical_not(m_water))] = 0
+
+    ## Visible to NIR ratio doesn't distinguish any clouds
+    #visnir = np.squeeze(hg.data(wl=990)/hg.data(wl=500))
+    #visnir[np.logical_not(m_water)] = np.amin(visnir)
+    #gt.quick_render(enh.linear_gamma_stretch(visnir))
+
+    for i in range(len(hg.coords("wl").coords)):
+        tmp_wl = hg.coords("wl").coords[i]
+        wlstr = str(tmp_wl)[:3]
+        tmp_path = Path(f"buffer/desis_17_all/desis_17_{wlstr}.png")
+        gp.generate_raw_image(enh.linear_gamma_stretch(
+            np.squeeze(hg.data(wl=tmp_wl))), tmp_path)
+
+    """ Plot model  """
+    model_wl, sfcref = get_model_ref(Path("data/lut_aero_ocean_sflux.pkl"))
+    plot_stats(hg, m_water, sfcref, model_wl*1000)
     exit(0)
 
+    hist_bands = [450, 500, 550, 600, 650, 700, 750, 800, 850, 900, 950]
+    water_px = [np.squeeze(hg.data(wl=b)[np.where(m_water)])
+                for b in hist_bands]
+    plot_hists(
+            arrays=water_px,
+            labels=[f"{b}$ nm$" for b in hist_bands]
+            )
+
+    '''
+    """ Iterate over each space covered by the kernel """
     kernel = {"x":IntAxis((0,20)), "y":IntAxis((0,20))}
     Y = np.zeros((hg.shape[0]//20, hg.shape[1]//20))
-    for combo,hg in gen_hg_tiles(hg, kernel):
+    for combo,tmp_hg in gen_hg_tiles(hg, kernel):
         slices = [a.as_slice for a in combo]
-        Y[*slices] = cloud_test(hg)
+        Y[*slices] = cloud_test(tmp_hg)
+    '''
+

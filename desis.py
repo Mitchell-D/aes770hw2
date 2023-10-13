@@ -8,6 +8,9 @@ import rasterio as rio
 import zarr
 from multiprocessing import Pool
 
+from krttdkit.visualize import guitools as gt
+from krttdkit.operate import enhance as enh
+from krttdkit.products import FeatureGrid
 """
 DESIS granules are uniquely identitfied by a "data take" ID, a tile ID, and
 a capture time. A granule corresponds to multiple files, generally including:
@@ -158,30 +161,44 @@ def get_desis_spectral(spectral_tif:Path, zarr_file:Path,
     assert not zarr_file.exists() and zarr_file.parent.is_dir()
     band_idxs = [b-1 for b in bands]
     with rio.open(spectral_tif) as tif:
+        ## Read the first band only in order to get the shap
         idx_0 = band_idxs[0]
         X_0 = tif.read(bands[0])*info[idx_0]["gain"]
-        shape = X_0.shape
-        Z = zarr.create(shape=(*shape,len(bands)), dtype="f16",
-                        chunks=(*shape,1), store=zarr_file.as_posix())
-        Z.oindex[:,:,0] = X_0
+        grid_shape = X_0.shape
+        assert not zarr_file.exists()
+        store = zarr.ZipStore(zarr_file, mode="w")
+        ## Coords for each spatial dim, band, and 1 feature (srad)
+        Z = zarr.create(shape=(*grid_shape,len(bands), 1), dtype="f16",
+                        chunks=(*grid_shape,1,1), store=store)
+        Z.oindex[:,:,0,0] = X_0
         new_info = [info[idx_0]]
 
+        ## Read the /est of the bands
         for i in range(1, len(band_idxs)):
             idx = band_idxs[i]
             print(f"Loading band {idx+1}")
-            Z.oindex[:,:,i] = tif.read(idx)*info[idx]["gain"]
+            Z.oindex[:,:,i,0] = tif.read(idx)*info[idx]["gain"]
             new_info.append(info[idx])
+        ## Wavelength information goes in meta dict since it's a coordinate
+        meta.update({"wl":info})
         Z.attrs["meta"] = meta
-        Z.attrs["info"] = info
-        Z.attrs["labels"] = bands
-        #zarr.save(zarr_file.as_posix(), Z)
+        Z.attrs["info"] = {}
+        Z.attrs["flabels"] = ("srad",)
+        Z.attrs["clabels"] = ["y", "x", "wl"]
+        ## No lat/lon so spatial coordinates are just indeces
+        Z.attrs["coord_arrays"] = (
+                tuple(range(grid_shape[0])),
+                tuple(range(grid_shape[1])),
+                tuple(meta["wl"][i]["wl"] for i in range(len(meta["wl"]))),
+                )
+        store.close()
 
 def get_desis_granule(files:list, zarr_file:Path, bands:list):
     meta, info = get_desis_meta_info(
             next(f for f in files if "METADATA" in f.name),
             get_rsrs=True,
             )
-    data = get_desis_spectral(
+    get_desis_spectral(
             spectral_tif=next(
                 f for f in files
                 if "SPECTRAL_IMAGE" in f.name and f.suffix==".tif"),
@@ -199,13 +216,44 @@ def _mp_get_desis_granule(args):
     """
     return get_desis_granule(**args)
 
+def get_desis_quality(quality_tif:Path, data_dir:Path=None):
+    labels = [
+            "shadow", "land_clear", "snow", "land_haze", "water_haze",
+            "land_cloud", "water_cloud", "water_clear", "aod", "pwv"
+            ]
+    gran_fields = quality_tif.name.split("-")[:5]
+    with rio.open(quality_tif) as tif:
+        tmp = tif.read()
+    Q = [tmp[i] for i in range(10)]
+    fg = FeatureGrid(labels=labels, data=Q)
+    if not data_dir is None:
+        fg.to_pkl(data_dir.joinpath("-".join(gran_fields)+"-QL2.pkl"))
+    return fg
+
+    for X in range(Q):
+        tmp = enh.linear_gamma_stretch(X[i])
+        print(enh.array_stat(X[i]))
+        gt.quick_render(tmp)
+    print(X.shape)
+
+
+
 if __name__=="__main__":
     out_dir = Path("data")
     desis_root = Path("data/desis/")
     #desis_dirs = [p for p in desis_root.iterdir() if p.is_dir()]
-    desis_dirs = [desis_root.joinpath("smoke")]
+    #desis_dirs = [desis_root.joinpath("smoke")]
+    desis_dirs = [desis_root.joinpath("ocean")]
     desis_grans = list(chain(*[desis_dir_dict(d).items() for d in desis_dirs]))
 
+    #'''
+    """ Make a FeatureGrid for quality data """
+    ql_path = Path("data/desis/ocean/DESIS-HSI-L2A-DT0314290188_005-20190503T164053-V0220-QL_QUALITY-2.tif")
+    #ql_path = Path("data/desis/smoke/DESIS-HSI-L2A-DT0865788448_017-20230607T153935-V0220-QL_QUALITY-2.tif")
+    get_desis_quality(ql_path,out_dir)
+    #'''
+
+    #'''
     """
     Make a list of arguments and save granules as Zarr directories
     containing attributes corresponding to the information needed to
@@ -214,8 +262,10 @@ if __name__=="__main__":
     workers = 10
     bands = list(range(1,236))
     args = [{"files":files,
-             "zarr_file":out_dir.joinpath(granule.substr+".zarr"),
+             "zarr_file":out_dir.joinpath(granule.substr+".zip"),
              "bands":bands,
             } for granule,files in desis_grans]
     with Pool(workers) as p:
         print(p.map(_mp_get_desis_granule, args))
+    #'''
+

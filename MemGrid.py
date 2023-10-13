@@ -79,14 +79,4 @@ class MemGrid:
                 meta=self._meta)
 
 if __name__=="__main__":
-    #zarr_path = Path("data/DESIS-HSI-L2A-DT0865788448_017-20230607T153935.zarr")
-    zarr_path = Path("data/DESIS-HSI-L2A-DT0865788448_015-20230607T153935.zarr")
-    MG = MemGrid.from_store(zarr_path)
-    hrange=(400,1000)
-    vrange=(400,1000)
-    window = 5
-    get_wl = lambda l:400+l*2.551
-    for i in range(len(MG.labels)-window):
-        tmp_fg = MG.to_fg(vrange=vrange, hrange=hrange,
-                          labels=MG.labels[i:i+window])
-        X = np.average(tmp_fg.data(), axis=-1)
+    pass

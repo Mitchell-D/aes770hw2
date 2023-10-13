@@ -13,6 +13,7 @@ from HyperGrid import HyperGrid
 
 aero_types = {1:"Rural", 2:"Urban", 3:"Oceanic", 4:"Tropo"}
 
+
 if __name__=="__main__":
     tmp_dir = Path("buffer/sbdart")
     pkl_path = Path("buffer/lut.pkl")
@@ -31,12 +32,18 @@ if __name__=="__main__":
         "ylabel":"Spectral Radiance ($Wm^{-2}sr{-1}\mu m^{-1}$)",
         }
 
+    """ Get the downward radiance """
+    flabels, fluxes = pkl.load(flux_file_ocean.open("rb"))
+    # Just use the first one since sfc reflectance should be the same.
+    fluxes = fluxes[0]
+    sfcup, sfcdn = fluxes[-2:]
+
     '''
     """ Plot each aerosol type and AOD wrt wl for one surface type """
     # (sza, tbaer, iaer, uzen, phi, wl)
     hg = HyperGrid.from_store(lut_file_noref)
-    #aero_type_img = "figures/aero_{atype}_ocean.png"
-    aero_type_img = "figures/aero_{atype}_noref.png"
+    #aero_type_img = "figures/model/aero_{atype}_ocean.png"
+    aero_type_img = "figures/model/aero_{atype}_noref.png"
     for atype in aero_types.keys():
         sub_data = np.squeeze(hg.data(sza=sza, saa=saa, vza=vza,
                                       uzen=vza, phi=raa, iaer=atype))
@@ -54,30 +61,79 @@ if __name__=="__main__":
                 )
     '''
 
-    """ Plot the difference between oceanic and no-reflectance radiance """
+    #'''
+    """ Plot the difference between ocean and no-albedo reflectance """
     ocean = HyperGrid.from_store(lut_file_ocean)
     noref = HyperGrid.from_store(lut_file_noref)
-    ocean_anom_img = "figures/aero_{atype}_ocean-anom.png"
+    ocean_anom_img = "figures/model/aero_{atype}_ocean-anom-ref.png"
     for atype in aero_types.keys():
+        plot_spec["ylabel"] = "Reflectance Factor"
         plot_spec["title"] = "Ocean Reflectance Contribution with " + \
-                f"{aero_types[atype]} Aerosol Loading)"
+                f"{aero_types[atype]} Aerosol Loading"
         tmp_oc = np.squeeze(ocean.data(
             sza=sza, saa=saa, vza=vza, uzen=vza, phi=raa, iaer=atype))
         tmp_nr = np.squeeze(noref.data(
             sza=sza, saa=saa, vza=vza, uzen=vza, phi=raa, iaer=atype))
-        anom = tmp_oc-tmp_nr
+        ## Convert to reflectance by dividing out sfc downward radiance
+        anom = (tmp_oc-tmp_nr)/sfcdn
         gp.plot_lines(
                 domain=ocean.coords("wl").coords,
                 ylines=[anom[i] for i in range(anom.shape[0])],
                 labels=[f"$\\tau$={ocean.coords('tbaer').coords[i]}"
                         for i in range(anom.shape[0])],
-                show=True,
+                show=False,
                 plot_spec=plot_spec,
                 image_path=Path(ocean_anom_img.format(
                     atype=aero_types[atype].lower())),
                 )
+    #'''
 
+    #'''
+    """
+    Plot the difference between aerosol and no-aerosol reflectance over ocean
+    """
+    ocean = HyperGrid.from_store(lut_file_ocean)
+    noref = HyperGrid.from_store(lut_file_noref)
+    ocean_anom_img = "figures/model/aero_{atype}_aero-anom-ref.png"
+    for atype in aero_types.keys():
+        plot_spec["ylabel"] = "Reflectance Factor"
+        plot_spec["title"] = "Aerosol Reflectance Contribution with " + \
+                f"{aero_types[atype]} Aerosol Loading"
+        tmp_oc = np.squeeze(ocean.data(
+            sza=sza, saa=saa, vza=vza, uzen=vza, phi=raa, iaer=atype))
+        tmp_na = np.squeeze(ocean.data(
+            sza=sza, saa=saa, vza=vza, uzen=vza, phi=raa, iaer=atype,
+            tbaer=0))
+        tmp_nr = np.squeeze(noref.data(
+            sza=sza, saa=saa, vza=vza, uzen=vza, phi=raa, iaer=atype))
+        ## Convert to reflectance by dividing out sfc downward radiance
+        anom = (tmp_oc-tmp_na)/sfcdn
+        gp.plot_lines(
+                domain=ocean.coords("wl").coords,
+                ylines=[anom[i] for i in range(anom.shape[0])],
+                labels=[f"$\\tau$={ocean.coords('tbaer').coords[i]}"
+                        for i in range(anom.shape[0])],
+                show=False,
+                plot_spec=plot_spec,
+                image_path=Path(ocean_anom_img.format(
+                    atype=aero_types[atype].lower())),
+                )
+    #'''
 
+    exit(0)
+    """ Plot ocean reflectance wrt wavelength """
+    flabels, fluxes = pkl.load(flux_file_ocean.open("rb"))
+    # Just use the first one since sfc reflectance should be the same.
+    fluxes = fluxes[0]
+    sfcup, sfcdn = fluxes[-2:]
+    wl = fluxes[0]
+    sfcref = (sfcup/sfcdn)
+    gp.plot_lines(
+            domain=wl,
+            ylines=[sfcref],
+            labels=["Ocean Surface Reflectance"],
+            show=True,
+            )
 
     #flux_labels, fluxes = pkl.load(flux_file.open("rb"))
 
