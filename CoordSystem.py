@@ -376,9 +376,9 @@ class CoordAxis(IntAxis):
         ## Allow single points; don't check if they're ascending
         if coords.size == 1:
             return coords
-        dcoords = np.diff(coords)
-        is_ascending = dcoords[0] > 0
-        assert np.all(np.diff(coords))
+        ## Make sure the coordinate array is monotonic
+        cdiff = np.diff(coords)
+        assert np.all(cdiff*cdiff[0] > 0)
         return coords
 
     def __init__(self, coords):
@@ -438,7 +438,7 @@ class CoordAxis(IntAxis):
 
     def around(self, value, bound_err=True):
         """
-        Returns IntAxis objects describing the points
+        Returns a 2-element IntAxis object surrounding the provided value
         """
         ## p1 is below or equal to value
         p1 = self.index(value,inclusive=True,above=False,bound_err=bound_err)

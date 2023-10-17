@@ -1,0 +1,229 @@
+\documentclass[12pt]{article}
+\usepackage[utf8]{inputenc}
+\usepackage[a4paper, total={6in, 8in}, margin=1in]{geometry}
+\usepackage{titlesec}
+%\usepackage[style=ieee, backend=biber]{biblatex}
+\usepackage{graphicx}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{amstext}
+\usepackage{enumitem}
+\usepackage{siunitx}
+\usepackage{array}
+\usepackage{xcolor}
+\usepackage{multirow}
+\usepackage{hyperref}
+\usepackage{tabularx}
+\usepackage{booktabs}
+\usepackage{soul}
+\usepackage{fancyhdr}
+\usepackage{setspace}
+
+\hypersetup{
+    colorlinks=true,
+    linkcolor=blue,
+    filecolor=magenta,
+    urlcolor=blue,
+    pdftitle={aes670hw2},
+    pdfpagemode=FullScreen,
+    }
+\urlstyle{same}
+
+\newcolumntype{L}{>{$}l<{$}}  % Math mode table
+\newcolumntype{R}{>{$}r<{$}}  % Math mode table
+\newcolumntype{C}{>{$}c<{$}}  % Math mode table
+
+\pagestyle{fancy}
+
+\renewcommand{\sectionmark}[1]{%
+\markboth{\thesection\quad #1}{}}
+\fancyhead{}
+\fancyhead[L]{\leftmark}
+\fancyfoot{}
+\fancyfoot[C]{\thepage}
+
+\bibliographystyle{ieeetr}
+%\addbibresource{main.bib}
+%\bibliography{main}
+
+\definecolor{Light}{gray}{.9}
+\sethlcolor{Light}
+
+\newcommand{\hltexttt}[1]{\texttt{\hl{#1}}}
+
+
+\titleformat{\section}
+  {\normalfont\fontsize{14}{15}\bfseries}{\thesection}{1em}{}
+
+\titleformat{\subsection}
+  {\normalfont\fontsize{12}{15}\bfseries}{\thesubsection}{1em}{}
+
+\title{AES 770 Satellite Remote Sensing II
+
+Aerosol Optical Depth Retrieval}
+ \author{Mitchell Dodson}
+\date{October 16, 2023}
+
+\begin{document}
+
+\maketitle
+
+\vspace{-2em}
+
+\begin{figure}[h!]
+    \centering
+    \includegraphics[width=.6\paperwidth]{figs/tc_004.png}
+    \caption{Truecolor over the Amazon, captured by DESIS on 09/03/2020 at 1446z}
+    \label{title_image}
+\end{figure}
+
+\section{Abstract}
+
+Aerosols are a critical part of Earth's climate system since they directly impact Earth's energy budget by scattering and absorption, indirectly impact cloud properties by serving as condensation nuclei, and have a measurable impact on human health. Aerosol retrievals from satellite data are important for understanding the behavior of aerosols because they offer a broad view of the spatial distribution and movement of aerosol plumes, as opposed to higher-confidence but discrete data from ground-based photometers. In this report, I outline my implementation of an aerosol optical depth (AOD) retrieval algorithm over land for the DESIS hyperspectral radiometer, focusing on imagery containing smoke aerosols over the Amazon Rainforest. The retrieval strategy tiles the field of regard into 10x10 pixels, and uses the unique spectral response curve of any dark vegetation within a tile to estimate the surface reflectance in the $.64\,\si{\mu m}$ red channel based on near-infrared.
+
+%\clearpage
+%\section{Code comment}\label{code_comment}
+
+\section{Theoretical Basis}
+
+\begin{equation}\label{toa_ref}
+    \rho^{*,M}(\lambda, \theta, \theta_0, \phi) = \rho_a^M(\lambda, \theta, \theta_0, \phi) + \frac{F_s^{\downarrow,M}(\lambda, \theta_0)T(\lambda, \theta)\rho(\lambda, \theta, \theta_0, \phi)}{1-s^M(\lambda)\rho'(\lambda)}
+\end{equation}
+
+\begin{equation}\label{size_dist}
+    \frac{dN(r)}{dr} = \sum_{i=1}^2\left(\frac{N_i}{\ln(10)\,r\,\sigma_i \sqrt{2\pi}}\exp\left[-\frac{\log(r)-log(r_i)}{2\sigma_i^2}\right]\right)
+\end{equation}
+
+\begin{equation}\label{mode_ratio}
+    \rho^* = \nu \rho^*_f + (1-\nu)\rho^*_c
+\end{equation}
+
+Although aerosols have a wide variety of size profiles and scattering properties, they can be broadly categorized into fine and coarse modes corresponding to effective radii around $0.05-1\,\si{\mu m}$ or greater than $2\,\si{\mu m}$, respectively \cite{tanre_remote_1997}\cite{kaufman_satellite_2002}. Fine modes represent materials like urban pollution and smoke, while coarse mode particles include dust and organic debris, pollen, and soot.
+
+Since the fine mode particles have radii around the visible and near-infrared spectrum, they dominantly affect incident light by Mie scattering. Aerosol phase functions are generally considerably anisotropic, which makes their effect on observed radiance quite sensitive to the viewing geometry. The overall effect of most aerosols is to increase the albedo of the atmospheric column in the solar spectrum, however carbonaceous aerosol types (such as those produced by biomass burning) also absorb an increment of incident light, which warms the surrounding atmospheric layer.
+
+Equation \ref{toa_ref} provides a generalized expression for the top-of-atmosphere reflectance $\rho^*$ given a single aerosol mode $M$, and an unknown aerosol loading. $M$ represents size $r_g$, phase function $P$, and single-scatter albedo $\omega_0$ of a constituent type. $\rho_a$ is the atmospheric path radiance given the single-scatter assumption, $F_s^\downarrow$ is the direct downward flux incident on the surface, $T$ is the upward transmittance of the atmosphere, $s$ is the ratio of upward radiation that is back-scattered by the atmosphere, $\rho$ is the actual surface reflectance, and finally $\rho'$ is the spherical albedo of the surface below. The first term in the equation is the aerosol path radiance at a particular wavelength $\lambda$, which is the quantity most directly related to AOD, and the second term accounts for atmospheric transmittance as well as secondary scattering from the atmosphere back to the surface.
+
+In order to model the effect of multiple distinct aerosol species in the atmospheric column, the aerosol radius distribution with respect to cumulative number count of aerosols are described in terms of a sum over log-normal distributions representing each type, as expressed by Equation \ref{size_dist}. It is usually sufficient to express the combined effect of aerosols in terms of the juxtaposition of one coarse and one fine mode based on a-priori knowledge of the season and region of the field of regard \cite{kaufman_satellite_2002}. The consequent top-of-atmosphere reflectance is represented by a percentage $\nu$ of the reflectance contribution with fine aerosols to the total observed reflectance.
+
+For the purposes of this project, I used the aerosol profiles identified by (Shettle, 1976) \cite{shettle_models_1976}, which include empirical values for the combined effects of coarse and fine modes for species typical to rural, urban, oceanic, and general tropospheric regions. These configurations are all included as presets in the SBDART radiative transfer model. Furthermore, since the model accounts for multiple scattering, the second term is implicitly included in the lookup tables I generated with the algorithm.
+
+\section{Lookup Table Generation}
+
+\begin{table}[h!]
+    \centering
+    \begin{tabular}{ m{.15\linewidth} | m{.15\linewidth} | m{0.6\linewidth}}
+        \textbf{Parameter} & \textbf{Value} & \textbf{Justification} \\
+        \hline
+        PHI; NPHI & [0,180]; 8 & $22.5^\circ$ even increments of relative azimuth angles. \\
+        \hline
+        UZEN; NZEN & [0,85]; 20 & $4.25^\circ$ even increments of viewing zenith angles. \\
+        \hline
+        SZA & [0,80]; 16 & $5^\circ$ even increments of solar zenith angle. \\
+        \hline
+        WL & [.4,1.0]; 120 & $5\,\si{nm}$ even increments of wavelength. \\
+        \hline
+        TBAER & [0,20]; 12 & Logarithmically spaced increments of aerosol optical depth. \\
+        \hline
+        IAER & 1, 2, 3, 4 & Regional aerosol mode (rural, urban, oceanic, tropospheric) \\
+        \hline
+        PBAR & 0 & No atmospheric scattering or pressure effects \\
+        \hline
+        IDATM & 1,2 & Mid-latitude Summer and tropical atmospheric water vapor profiles, depending on the field of regard. \\
+        \hline
+        ISALB & 6 & Dark vegetated surface \\
+        \hline
+        CORINT & True & Correct error in the $\Delta M$ scale of the phase function. \\
+        \hline
+        IOUT & 5 & Generate spectral radiance, as well as path-integrated spectral fluxes at the top-of-atmosphere and surface. \\
+    \end{tabular}
+    \caption{Outline of the SBDART parameters used for the generation of lookup tables, which include tables for TOA spectral radiance and path-integrated solar irradiance.}
+    \label{sbdart_params}
+\end{table}
+
+Table \ref{sbdart_params} shows the SBDART configuration I used to generate the lookup tables for AOD retrieval over vegetated surfaces. The subsequent spectral radiance lookup table has 6 orthogonal axes corresponding to the increments in solar zenith angle, AOD, aerosol mode, viewing zenith angle, path-relative azimuth angle, and wavelength. Because of the nonspherical phase functions of many aerosols, it's important that the CORINT parameter is set to True in order to correct for assumptions made in the truncation of the phase function by the DISORT backend used in SBDART \cite{nakajima_algorithms_1988}. Additionally, SBDART atmospheric correction is turned off because the L2 DESIS product I'm using for analysis is already corrected for the atmosphere and terrain.
+
+\section{Retrieval Methodology}
+
+\subsection{Model Analysis}
+
+Figure \ref{rural-response} shows the spectral reflectance factor and anomaly of typical rural aerosol amounts over vegetation (using the response curve included with SBDART). The reflectance is small but slightly stratified in the RED waveband $~640\,\si{nm}$, which is the phenomenon typically exploited by comparison to the reflectance in a short-wave infrared (SWIR) channel like $2.24\,\si{\mu m}$ or $3.9\,\si{\mu m}$. SWIR channels have effective radii that are large enough not to be strongly attenuated by fine-particle Mie scattering, so they serve as a good baseline for estimating the actual surface reflectance in the RED channel using an empirical ratio.
+
+\begin{figure}[h!]
+    \centering
+    \begin{center}
+        \includegraphics[width=.55\paperwidth]{figs/aero_veg_rural.png}
+        \includegraphics[width=.55\paperwidth]{figs/aero_rural_veg-anom.png}
+    \end{center}
+    \caption{Model-derived spectral response curves over vegetation given multiple rural aerosol loadings, with AOD units given in green channel $\tau(550nm)$. The top plot shows the estimated TOA reflectance (after atmospheric correction), and the bottom plot shows the component of reflectance attributable to aerosol effects. The latter was obtained by subtracting the spectral response of only vegetation ($\tau=0$) from the aerosol-laden reflectance at each wavelength and aerosol amount.}
+    \label{rural-response}
+\end{figure}
+
+\clearpage
+
+The aerosol model in Figure \ref{rural-response} corresponds mainly to fine-grained natural materials such as sulfates and organic compounts, but includes a component for continental dust which accounts for about $30\%$ of the total by count. Furthermore, the model has a complex index of refraction, with absorptivity that depends intrinsically on the \cite{remer_modis_2005}. According to (Shettle, 1976), the absorptivity peaks in the near-infrared range, hence the decrease in reflectance as wavelength increases \cite{shettle_models_1976}.
+
+\subsection{Dense Dark Difficulties}
+
+\begin{figure}[h!]
+    \centering
+    \begin{center}
+        \includegraphics[width=.75\paperwidth]{figs/ddv-response.png}
+    \end{center}
+    \caption{Spectral response of pixels selected as dense dark vegetation.}
+    \label{ddv-response}
+\end{figure}
+
+
+My procedure for estimating aerosol optical depth is similar to the one used for over-land retrievals by the MODIS operational product, initially outlined by (Kaufman and Tanre, 1997) \cite{remer_modis_2005}\cite{kaufman_operational_1997}. Since aerosols tend to have concentrations that vary on relatively large spatial scales, the strategy starts by tiling the field of regard into square sub-sections of 10x10 or 20x20 pixels. AOD is retrieved independently for each grouping of pixels by identifying pixels containing dense dark vegetation (DDV) on the surface, and leveraging the characteristic increase in reflectance of vegetation from the visible to near infrared range.
+
+Figure \ref{rural-response} eludes to one of the primary difficulties I encountered while developing the procedure. Since DESIS only includes bands in the $.4-1\,\si{\mu m}$ range, the above technique for estimating surface reflectance as a ratio of the reflectance in a $2.24\,\si{\mu m}$ or $3.9\,\si{\mu m}$ cannot be used. Instead, the entire range of the instrument's spectral sensitivity is affected by rural aerosols.
+
+Since typical background continental aerosol optical depth values around $\tau = .3$ are only responsible for a change few thousandths of a reflectance unit, the retrieved AOD is incredibly dependent on the selected surface reflectance. I attempted many strategies for rectifying the additional uncertainty in surface reflectance of vegetated pixels including (1) modifying the lookup table to search for the difference between NIR and RED reflectance rather than their magnitudes, (2) establishing an a-priori guess for aerosol optical depth based on the ratio of NIR to RED, and (3) using the lookup table to calculate an empirical ratio between RED and the $.7\,\si{\mu m}$ channel (where the AOD curves intersect).
+
+The first two strategies were unsuccessful because it was difficult to find initial thresholds for DDV pixels that generalized across an entire scene, much less across multiple granules, and the third failed because the rapid increase in vegetation reflectance makes the observed value very sensitive to an increment change in wavelength, and the increase in DESIS-observed reflectance over vegetation is actually near $.73\,\si{\mu m}$ at $.7\,\si{\mu m}$. Attempts to constrain DDV pixels to those with an in-range reflectance jump inevitably made DDV pixel selections too sparse.
+
+\begin{equation}\label{ddv_thresh}
+    \frac{NIR}{RED} \geq 4 \text{ \textbf{and} } 0.1 \leq NIR \leq .28 \text{ \textbf{and} } NDVI > .6 \text{ \textbf{and} } RED \leq .04
+\end{equation}
+
+\begin{figure}[h!]
+    \centering
+    \begin{center}
+        \includegraphics[width=.75\paperwidth]{figs/ddv-hist.png}
+    \end{center}
+    \caption{Histograms of DDV pixels in several wavebands. Only the $.55\,\si{\mu m}$, $.65\,\si{\mu m}$, and $.85\,\si{\mu m}$ channels were used for thresholding.}
+    \label{ddv-hist}
+\end{figure}
+
+Ultimately, I settled on a method similar to (Richter, 2006) which starts with a moderate a-priori assumption that the background visibility is $23\,\si{km}$, or about $\tau = .27$, and iteratively changes the upper bound on $.65\,\si{\mu m}$ surface reflectance until the number of DDV pixels in a tile is as close as possible to a percentage. The percentage threshold is set as a hyperparameter, but a threshold of $8\%$ tends to return sufficiently many and sufficiently dark pixeles.
+
+My modified version of the procedure starts by reducing the scene pixels to only the ones that conform to the thresholds in Equation \ref{ddv-hist}. Next, the algorithm uses the AOD first-guess and the scene geometry to reduce the lookup table and determine an aerosol contribution, which is subtracted from the observed reflectance for a surface reflectance estimate. This implies the likely-reasonable assumption that the aerosol attenuation of additional light reflected from the surface are negligible. If the threshold cannot be reached or if too many pixels are selected with the tightest reasonable threshold, the a-priori optical depth is increased or decreased, and the threshold selection is iterated again with $\tau = .13$ and $\tau = .8$, respectively. If the iteration fails again, the pixel is rejected.
+
+\begin{figure}[h!]
+    \centering
+    \begin{center}
+        \includegraphics[width=.39\paperwidth]{}
+    \end{center}
+    \caption{}
+    \label{}
+\end{figure}
+
+\vspace{-1em}
+
+\end{document}
+
+\begin{figure}[h!]
+    \centering
+    \begin{center}
+        \makebox[\textwidth]{
+            \includegraphics[width=.39\paperwidth]{}
+            \includegraphics[width=.39\paperwidth]{}
+        }
+    \end{center}
+    \caption{}
+    \label{}
+\end{figure}
+
+\vspace{-1em}
+

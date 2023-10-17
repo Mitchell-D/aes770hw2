@@ -68,27 +68,7 @@ def convert_zarr_fg_to_hg(in_store:Path, out_store:Path):
     store.flush()
     store.close()
 
-def gen_hg_tiles(hg:HyperGrid, tile:dict):
-    """
-    Returns a generator that tiles over a HyperGrid's shape with a kernel
-    mapping string coordinate labels to a rooted IntAxis range
-
-    :@return: generator for combos and tuple showing final shape
-    """
-    assert all(v.bounded and v.start==0 for v in tile.values())
-    t_labels,t_axes = list(zip(*tile.items()))
-    t_shape = np.array([s.size for s in t_axes])
-    combos = list(np.where(np.full(
-        [hg.coords(t_labels[i]).size//t_axes[i].size
-         for i in range(len(t_labels))], True)))
-    combos = [combos[i]*t_axes[i].size for i in range(len(combos))]
-    combos = list(map(np.asarray, zip(*combos)))
-    combos = [[IntAxis((c[i], c[i]+t_shape[i],1)) for i in range(len(c))]
-              for c in combos]
-    combos = ((c,hg.subgrid(**dict(zip(t_labels, c)))) for c in combos)
-    return combos
-
-def cloud_mask(hg:HyperGrid, thresh=.1):
+def water_mask(hg:HyperGrid, thresh=.1):
     ndwi = (hg.data(wl=550)-hg.data(wl=850)) / \
             (hg.data(wl=550)+hg.data(wl=850))
     wmask = np.squeeze(ndwi) > thresh
@@ -150,7 +130,8 @@ if __name__=="__main__":
     #hg_path = Path("data/DESIS-HSI-L2A-DT0865788448_016-20230607T153935.zip")
     #hg_path = Path("data/DESIS-HSI-L2A-DT0865788448_015-20230607T153935.zip")
     #hg_path = Path("data/DESIS-HSI-L2A-DT0865788448_014-20230607T153935.zip")
-    hg_path = Path("data/DESIS-HSI-L2A-DT0865788448_017-20230607T153935.zip")
+    #hg_path = Path("data/DESIS-HSI-L2A-DT0865788448_017-20230607T153935.zip")
+    hg_path = Path("data/DESIS-HSI-L2A-DT0314290188_005-20190503T164053.zip")
 
     hrange=(400,1000)
     vrange=(400,1000)
@@ -160,21 +141,26 @@ if __name__=="__main__":
 
     """ show a truecolor with water mask """
     truecolor = get_rgb(hg,(640, 550, 460))
-    m_water = cloud_mask(hg)
+    m_water = water_mask(hg, thresh=0)
     tc_water = truecolor
     tc_water[np.where(np.logical_not(m_water))] = 0
+    print(enh.array_stat(tc_water))
+    gt.quick_render(enh.linear_gamma_stretch(tc_water))
 
     ## Visible to NIR ratio doesn't distinguish any clouds
-    #visnir = np.squeeze(hg.data(wl=990)/hg.data(wl=500))
-    #visnir[np.logical_not(m_water)] = np.amin(visnir)
-    #gt.quick_render(enh.linear_gamma_stretch(visnir))
+    visnir = np.squeeze(hg.data(wl=990)/hg.data(wl=500))
+    visnir[np.logical_not(m_water)] = np.amin(visnir)
+    gt.quick_render(enh.linear_gamma_stretch(visnir))
 
+    '''
+    gran_id = 17
     for i in range(len(hg.coords("wl").coords)):
         tmp_wl = hg.coords("wl").coords[i]
         wlstr = str(tmp_wl)[:3]
-        tmp_path = Path(f"buffer/desis_17_all/desis_17_{wlstr}.png")
+        tmp_path = Path(f"buffer/desis_17_all/desis_{gran_id}_{wlstr}.png")
         gp.generate_raw_image(enh.linear_gamma_stretch(
             np.squeeze(hg.data(wl=tmp_wl))), tmp_path)
+    '''
 
     """ Plot model  """
     model_wl, sfcref = get_model_ref(Path("data/lut_aero_ocean_sflux.pkl"))
@@ -188,13 +174,3 @@ if __name__=="__main__":
             arrays=water_px,
             labels=[f"{b}$ nm$" for b in hist_bands]
             )
-
-    '''
-    """ Iterate over each space covered by the kernel """
-    kernel = {"x":IntAxis((0,20)), "y":IntAxis((0,20))}
-    Y = np.zeros((hg.shape[0]//20, hg.shape[1]//20))
-    for combo,tmp_hg in gen_hg_tiles(hg, kernel):
-        slices = [a.as_slice for a in combo]
-        Y[*slices] = cloud_test(tmp_hg)
-    '''
-

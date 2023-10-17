@@ -184,16 +184,21 @@ if __name__=="__main__":
     #flux_file = Path("data/aerosol_sfluxes.pkl")
     zarr_file = Path("buffer/tmp_lut.zip")
     flux_file = Path("buffer/tmp_flux.pkl")
-    description = "Spectral response of several boundary layer AODs in DESIS' wave range; no atmospheric scattering (since L2 data); fixed solar zenith of 23.719deg; rural aerosol types; default aerosol profile"
+    #description = "Spectral response of several boundary layer AODs in DESIS' wave range; no atmospheric scattering (since L2 data); fixed solar zenith of 23.719deg; rural aerosol types; default aerosol profile"
+    description = "Multiple aerosol loadings over vegetation; normal atmospheric effects"
 
     """
     """
     sbdart_args = {
-            "idatm":2, # Mid-latitude summer
+            #"idatm":2, # Mid-latitude summer
+            "idatm":1, # Tropical
             "pbar":0, # no atmospheric scattering or absorption
+            #"pbar":-1, # Default atmospheric scattering and absorption
             #"isalb":7, # Ocean water
-            "isalb":0, # User specified albedo
+            #"isalb":0, # User specified albedo
+            "isalb":6, # Vegetation
             #"albcon":0, # No reflection
+            "corint":"t", # Delta-M correction per (Nakajima & Tanaka, 1988)
             "nphi":8,
             "phi":"0,180",
             "nzen":20,
@@ -212,11 +217,15 @@ if __name__=="__main__":
             zarr_file=zarr_file,
             sflux_file=flux_file,
             #fields=["sza", "tbaer", "iaer"],
-            fields=["sza", "tbaer", "albcon"],
-            coords=[list(range(0, 70, 5)),
-                  [0, 0.05, 0.01, 0.25, 0.5, 0.75, 1, 2, 5, 10],
-                  [0, .2,.4,.6,.8,1]],
             #coords = [[0], [0, .005, .05, .5], [1, 3]],
+            #fields=["sza", "tbaer", "albcon"],
+            #coords=[list(range(0, 70, 5)),
+            #      [0, 0.05, 0.01, 0.25, 0.5, 0.75, 1, 2, 5, 10],
+            #      [0, .2,.4,.6,.8,1]],
+            fields=["sza", "tbaer", "iaer"],
+            coords=[list(range(0, 70, 5)),
+                  [0, 0.05, 0.075, 0.1, 0.25, 0.5, 0.75, 1, 2, 5, 10, 20],
+                  [1,2,3,4]],
             workers=10,
             sbdart_args=sbdart_args,
             tmp_dir_parent=tmp_dir,

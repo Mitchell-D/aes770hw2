@@ -85,11 +85,13 @@ class HyperGrid:
         assert label.lower() in self.vocab
         return label
 
-    def around(self, as_slice=False, bound_err=True, **coords):
+    def around(self, as_slice=False, as_hypergrid=False,
+               bound_err=True, **coords):
         """
         Returns a tuple of IntAxis surrounding the provided coordinate values.
         """
         assert all(k in self._clabels for k in coords.keys())
+        assert not (as_slice and as_hypergrid)
         bounds = []
         for cl in self._clabels:
             if cl in coords.keys():
@@ -98,7 +100,19 @@ class HyperGrid:
             else:
                 bounds.append(IntAxis((0, None)))
         if as_slice:
-            bounds = [b.as_slice for b in bounds]
+            return [b.as_slice for b in bounds]
+        if as_hypergrid:
+            slices = [b.as_slice for b in bounds]
+            return HyperGrid(
+                    data=self.data()[*slices],
+                    flabels=self._flabels,
+                    clabels=self._clabels,
+                    coord_arrays=[self._coords[i][slices[i]]
+                                  for i in range(len(self._coords))],
+                    info=self._info,
+                    meta=self._meta,
+                    masks=self._masks,
+                    )
         return tuple(bounds)
 
     def subgrid(self, flabels=None, **coords):
@@ -168,9 +182,14 @@ class HyperGrid:
         return self.subgrid(flabels, **kwargs)._data
 
     def coords(self, clabel:str=None):
+        """ Return an IntAxis corresponding to the coordinate label """
         if clabel is None:
             return self._cs
         return self._cs.axis(self._clabels.index(self.validate_label(clabel)))
+    @property
+    def size(self):
+        """ return the total number of data points """
+        return self._data.size
     @property
     def clabels(self):
         """ return the coordinate labels """

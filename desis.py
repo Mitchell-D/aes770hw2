@@ -103,22 +103,30 @@ def get_desis_meta_info(metadata_xml:Path, get_rsrs:bool=False):
         ))
 
     scene = {
-            "mean_elev":specific["terrain"]["meanGroundElevation"],
-            "mean_slope":specific["terrain"]["meanSlope"],
-            "mean_H2Ovap":specific["waterVapour"]["meanWaterVapour"],
-            "mean_aod":specific["meanAerosolOpticalThickness"],
-            "pct_haze":specific["haze"]["percentageHaze"],
-            "pct_cloud":specific["clouds"]["percentageClouds"],
-            "pct_cloudshadow":specific["cloudShadow"]["percentageCloudShadow"],
-            "pct_toposhadow":specific["topoShadow"]["percentageTopoShadow"],
+            "mean_elev":float(
+                specific["terrain"]["meanGroundElevation"]),
+            "mean_slope":float(
+                specific["terrain"]["meanSlope"]),
+            "mean_H2Ovap":float(
+                specific["waterVapour"]["meanWaterVapour"]),
+            "mean_aod":float(
+                specific["meanAerosolOpticalThickness"]),
+            "pct_haze":float(
+                specific["haze"]["percentageHaze"]),
+            "pct_cloud":float(
+                specific["clouds"]["percentageClouds"]),
+            "pct_cloudshadow":float(
+                specific["cloudShadow"]["percentageCloudShadow"]),
+            "pct_toposhadow":float(
+                specific["topoShadow"]["percentageTopoShadow"]),
             }
 
     meta = {
             "polygon":polygon,
-            "sza_saa":(specific["sunZenithAngle"],
-                       specific["sunAzimuthAngle"]),
-            "via_vaa":(specific["sceneIncidenceAngle"],
-                       specific["sceneAzimuthAngle"]),
+            "sza_saa":(float(specific["sunZenithAngle"]),
+                       float(specific["sunAzimuthAngle"])),
+            "via_vaa":(float(specific["sceneIncidenceAngle"]),
+                       float(specific["sceneAzimuthAngle"])),
             "time_range":time_range,
             "sensor_altitude":float(base["altitudeCoverage"]),
             "scene":scene
@@ -222,9 +230,10 @@ def get_desis_quality(quality_tif:Path, data_dir:Path=None):
             "land_cloud", "water_cloud", "water_clear", "aod", "pwv"
             ]
     gran_fields = quality_tif.name.split("-")[:5]
+    Q = []
     with rio.open(quality_tif) as tif:
-        tmp = tif.read()
-    Q = [tmp[i] for i in range(10)]
+        #Q = tif.read(i)
+        Q = [tif.read(i) for i in range(1,11)]
     fg = FeatureGrid(labels=labels, data=Q)
     if not data_dir is None:
         fg.to_pkl(data_dir.joinpath("-".join(gran_fields)+"-QL2.pkl"))
@@ -243,14 +252,17 @@ if __name__=="__main__":
     desis_root = Path("data/desis/")
     #desis_dirs = [p for p in desis_root.iterdir() if p.is_dir()]
     #desis_dirs = [desis_root.joinpath("smoke")]
-    desis_dirs = [desis_root.joinpath("ocean")]
+    desis_dirs = [desis_root.joinpath("amazon")]
+    #desis_dirs = [desis_root.joinpath("ocean")]
+    #desis_dirs = [desis_root.joinpath("smoke_new")]
     desis_grans = list(chain(*[desis_dir_dict(d).items() for d in desis_dirs]))
+    all_files = list(chain(*[p for _,p in desis_grans]))
 
     #'''
     """ Make a FeatureGrid for quality data """
-    ql_path = Path("data/desis/ocean/DESIS-HSI-L2A-DT0314290188_005-20190503T164053-V0220-QL_QUALITY-2.tif")
-    #ql_path = Path("data/desis/smoke/DESIS-HSI-L2A-DT0865788448_017-20230607T153935-V0220-QL_QUALITY-2.tif")
-    get_desis_quality(ql_path,out_dir)
+    ql_files = [p for p in all_files if "QUALITY-2" in p.name]
+    for ql_path in ql_files:
+        get_desis_quality(ql_path,out_dir)
     #'''
 
     #'''
