@@ -19,7 +19,7 @@ from CoordSystem import CoordSystem, IntAxis, CoordAxis
 _WL_RED = 660
 #_WL_NIR = 990
 #_WL_NIR = 850
-_WL_NIR = 850
+_WL_NIR = 860
 _WL_DEEPRED = 700
 _WL_GREEN = 550
 
@@ -182,14 +182,17 @@ def show_all_quality(data_dir:Path, field="aod", hrange=None, vrange=None,
             tmp_fg = tmp_fg.subgrid(vrange=vrange)
         if not hrange is None:
             tmp_fg = tmp_fg.subgrid(hrange=hrange)
-        #print(f"\n{f.name}")
-        #print(enh.array_stat(tmp_fg.data(field)/100))
+        print()
+        print(f"\n{f.name}")
+        print(enh.array_stat(tmp_fg.data(field)))
+        print(enh.array_stat(tmp_fg.data(field)*.006))
         #print(tmp_fg.data(field).dtype)
-        tmp_mask = tmp_fg.data(field) == np.amin(tmp_fg.data(field))
-        X = tmp_fg.data(field, mask=tmp_mask,
-                        mask_value=np.amax(tmp_fg.data(field)))
+        #tmp_mask = tmp_fg.data(field) == np.amax(tmp_fg.data(field))
+        #X = tmp_fg.data(field, mask=tmp_mask,
+        #                mask_value=np.amax(tmp_fg.data(field)))
+        X = tmp_fg.data(field)
         rgb = gt.scal_to_rgb(X)
-        rgb[tmp_mask] = 0
+        #rgb[tmp_mask] = 0
         if show:
             gt.quick_render(rgb)
         if fig_dir:
@@ -349,7 +352,7 @@ def plot_hists(arrays:list, labels:list=None, nbins=256):
     plt.title("DESIS Reflectance Histograms Over Dense Dark Vegetation")
     plt.ylabel("Count")
     plt.xlabel("Reflectance")
-    #plt.show()
+    plt.show()
 
 if __name__=="__main__":
     data_dir = Path("data")
@@ -426,7 +429,7 @@ if __name__=="__main__":
     ## Show all quality masks and their stats within constraints
     model_fig_dir = Path("figures/qlmask")
     show_all_quality(data_dir, field="aod", hrange=hrange, vrange=vrange,
-            substr="20230607",show=False,
+            substr="20200903",show=False,
             fig_dir=model_fig_dir,mask=fg.data("oob"))
     '''
 
@@ -493,7 +496,9 @@ if __name__=="__main__":
     #gt.quick_render(AOD)
     valid_aod = np.logical_not(np.isnan(AOD))
     AOD[np.logical_not(valid_aod)] = 0
-    print(TF.BLUE(f"Average AOD: {np.average(AOD[valid_aod])}"))
+    print(TF.BLUE(f"Average AOD:    {np.average(AOD[valid_aod])}"))
+    print(enh.array_stat(AOD[valid_aod]))
+    print(TF.BLUE(f"Validation AOD: {hg.meta('scene')['mean_aod']}"))
 
     #'''
     ## Use the DESIS data to generate a truecolor with DDV pixels masked
@@ -550,7 +555,6 @@ if __name__=="__main__":
             )
 
     """ Plot validation curves """
-    exit(0)
     print(enh.array_stat(fg.data("aod")[valid_aod]/100))
     print(enh.array_stat(AOD[valid_aod]))
     validation_curve(AOD[valid_aod], fg.data("aod")[valid_aod]/100,

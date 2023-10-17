@@ -51,6 +51,18 @@
 
 \newcommand{\hltexttt}[1]{\texttt{\hl{#1}}}
 
+\newcommand*{\problem}[2]{
+    \begin{table}[ht]
+    \centering
+        \begin{tabular}{ | p{.1\linewidth} p{.9\linewidth} | }
+            \hline
+            \vspace{.3em}\textbf{\large#1:} & \vspace{.3em}\footnotesize{#2}\hspace{.2em}\vspace{.5em} \\ \hline
+        \end{tabular}
+    \end{table}
+}
+
+\newcommand\T{\rule{0pt}{2.6ex}}       % Top strut
+\newcommand\B{\rule[-1.2ex]{0pt}{0pt}} % Bottom strut
 
 \titleformat{\section}
   {\normalfont\fontsize{14}{15}\bfseries}{\thesection}{1em}{}
@@ -62,7 +74,7 @@
 
 Aerosol Optical Depth Retrieval}
  \author{Mitchell Dodson}
-\date{October 16, 2023}
+\date{October 17, 2023}
 
 \begin{document}
 
@@ -79,7 +91,7 @@ Aerosol Optical Depth Retrieval}
 
 \section{Abstract}
 
-Aerosols are a critical part of Earth's climate system since they directly impact Earth's energy budget by scattering and absorption, indirectly impact cloud properties by serving as condensation nuclei, and have a measurable impact on human health. Aerosol retrievals from satellite data are important for understanding the behavior of aerosols because they offer a broad view of the spatial distribution and movement of aerosol plumes, as opposed to higher-confidence but discrete data from ground-based photometers. In this report, I outline my implementation of an aerosol optical depth (AOD) retrieval algorithm over land for the DESIS hyperspectral radiometer, focusing on imagery containing smoke aerosols over the Amazon Rainforest. The retrieval strategy tiles the field of regard into 10x10 pixels, and uses the unique spectral response curve of any dark vegetation within a tile to estimate the surface reflectance in the $.64\,\si{\mu m}$ red channel based on near-infrared.
+Aerosols are a critical part of Earth's climate system since they directly impact Earth's energy budget by scattering and absorption, indirectly impact cloud properties by serving as condensation nuclei, and have a measurable impact on human health. Aerosol retrievals from satellite data are important for understanding the behavior of aerosols because they offer a broad view of the spatial distribution and movement of aerosol plumes, as opposed to higher-confidence but discrete data from ground-based photometers. In this report, I outline my implementation of an aerosol optical depth (AOD) retrieval algorithm over land using the DESIS hyperspectral radiometer, and focusing on imagery containing rural aerosol types over the Amazon Rainforest. The retrieval strategy tiles the field of regard into 10x10 pixels, and uses the unique spectral response curve of any dark vegetation within a tile to estimate the surface reflectance in the $.64\,\si{\mu m}$ (RED) channel based on $.82-.88\mu m$ (NIR).
 
 %\clearpage
 %\section{Code comment}\label{code_comment}
@@ -161,9 +173,9 @@ Figure \ref{rural-response} shows the spectral reflectance factor and anomaly of
 
 \clearpage
 
-The aerosol model in Figure \ref{rural-response} corresponds mainly to fine-grained natural materials such as sulfates and organic compounts, but includes a component for continental dust which accounts for about $30\%$ of the total by count. Furthermore, the model has a complex index of refraction, with absorptivity that depends intrinsically on the \cite{remer_modis_2005}. According to (Shettle, 1976), the absorptivity peaks in the near-infrared range, hence the decrease in reflectance as wavelength increases \cite{shettle_models_1976}.
+The aerosol model in Figure \ref{rural-response} corresponds mainly to fine-grained natural materials such as sulfates and organic compounts, but includes a component for continental dust which accounts for about $30\%$ of the total by count. Furthermore, the model has a complex index of refraction, with absorptivity that depends intrinsically on the aerosol loading of the column \cite{remer_modis_2005}. According to (Shettle, 1976), the absorptivity peaks in the near-infrared range, hence the decrease in reflectance as wavelength increases \cite{shettle_models_1976}.
 
-\subsection{Dense Dark Difficulties}
+\subsection{Dense, Dark Difficulties}
 
 \begin{figure}[h!]
     \centering
@@ -181,10 +193,12 @@ Figure \ref{rural-response} eludes to one of the primary difficulties I encounte
 
 Since typical background continental aerosol optical depth values around $\tau = .3$ are only responsible for a change few thousandths of a reflectance unit, the retrieved AOD is incredibly dependent on the selected surface reflectance. I attempted many strategies for rectifying the additional uncertainty in surface reflectance of vegetated pixels including (1) modifying the lookup table to search for the difference between NIR and RED reflectance rather than their magnitudes, (2) establishing an a-priori guess for aerosol optical depth based on the ratio of NIR to RED, and (3) using the lookup table to calculate an empirical ratio between RED and the $.7\,\si{\mu m}$ channel (where the AOD curves intersect).
 
-The first two strategies were unsuccessful because it was difficult to find initial thresholds for DDV pixels that generalized across an entire scene, much less across multiple granules, and the third failed because the rapid increase in vegetation reflectance makes the observed value very sensitive to an increment change in wavelength, and the increase in DESIS-observed reflectance over vegetation is actually near $.73\,\si{\mu m}$ at $.7\,\si{\mu m}$. Attempts to constrain DDV pixels to those with an in-range reflectance jump inevitably made DDV pixel selections too sparse.
+The first two strategies were unsuccessful because it was difficult to find initial thresholds for DDV pixels that generalized across an entire scene, much less across multiple granules, and the third failed because the rapid increase in vegetation reflectance makes the observed value very sensitive to an increment change in wavelength, and the increase in DESIS-observed reflectance over vegetation is actually near $.73\,\si{\mu m}$ rather than $.7\,\si{\mu m}$ as suggested by the model. Attempts to constrain DDV pixels to those with an in-range reflectance jump inevitably made DDV pixel selections too sparse.
+
+\subsection{Reference Pixel Selection}
 
 \begin{equation}\label{ddv_thresh}
-    \frac{NIR}{RED} \geq 4 \text{ \textbf{and} } 0.1 \leq NIR \leq .28 \text{ \textbf{and} } NDVI > .6 \text{ \textbf{and} } RED \leq .04
+    \frac{NIR}{RED} \geq 4 \text{ \textbf{and} } 0.1 \leq NIR \leq .28 \text{ \textbf{and} } NDVI > .6 \text{ \textbf{and} } RED \leq .04 \text{ \textbf{and} } NDWI < -.6
 \end{equation}
 
 \begin{figure}[h!]
@@ -196,20 +210,123 @@ The first two strategies were unsuccessful because it was difficult to find init
     \label{ddv-hist}
 \end{figure}
 
-Ultimately, I settled on a method similar to (Richter, 2006) which starts with a moderate a-priori assumption that the background visibility is $23\,\si{km}$, or about $\tau = .27$, and iteratively changes the upper bound on $.65\,\si{\mu m}$ surface reflectance until the number of DDV pixels in a tile is as close as possible to a percentage. The percentage threshold is set as a hyperparameter, but a threshold of $8\%$ tends to return sufficiently many and sufficiently dark pixeles.
-
-My modified version of the procedure starts by reducing the scene pixels to only the ones that conform to the thresholds in Equation \ref{ddv-hist}. Next, the algorithm uses the AOD first-guess and the scene geometry to reduce the lookup table and determine an aerosol contribution, which is subtracted from the observed reflectance for a surface reflectance estimate. This implies the likely-reasonable assumption that the aerosol attenuation of additional light reflected from the surface are negligible. If the threshold cannot be reached or if too many pixels are selected with the tightest reasonable threshold, the a-priori optical depth is increased or decreased, and the threshold selection is iterated again with $\tau = .13$ and $\tau = .8$, respectively. If the iteration fails again, the pixel is rejected.
+Ultimately, I settled on a method similar to (Richter, 1996) which starts with a moderate a-priori assumption that the background visibility is $23\,\si{km}$, or about $\tau = .27$. The AOD is then used alongside the LUT to approximate the surface reflectance of all pixels identified as vegetation. The algorithm then iteratively changes the upper bound on $.65\,\si{\mu m}$ surface reflectance until the number of DDV pixels in a tile is within a percentage range of the total number of pixels in the tile \cite{richter_spatially_1996}. The percentage threshold is set as a hyperparameter, but a threshold of $8\%$ tends to return sufficiently many and sufficiently dark pixels. A more detailed description of my modified version of the procedure follows.
 
 \begin{figure}[h!]
     \centering
     \begin{center}
-        \includegraphics[width=.39\paperwidth]{}
+        \makebox[\textwidth]{
+            \includegraphics[width=.39\paperwidth]{figs/001-ddv.png}
+            \includegraphics[width=.39\paperwidth]{figs/003-ddv.png}
+        }
     \end{center}
-    \caption{}
-    \label{}
+    \caption{Truecolor RGBs with all DDV pixels selected by my procedure marked in red. There are still some cloud shadow pixels chosen as DDV, which is certainly a source of error, however most of these are later rejected during the AOD inversion for having apparent RED surface reflectances that are outside of the lookup table range.}
+    \label{ddv_sel}
 \end{figure}
 
-\vspace{-1em}
+\begin{enumerate}
+    \item Check whether any pixels in the tile have a NDWI value greater than $-.6$. If so, reject the entire tile, as the reflectance of coastline pixels can sometimes resemble the vegetation spectral response.
+    \item Reduce the tile pixels to only the ones that conform to the thresholds in Equation \ref{ddv-hist}. In my experience, these were restrictive enough to reject clouds and bare soil.
+    \item Use the AOD first-guess $\tau=.2$ and the scene geometry ($\theta$, $\theta_0$, $\phi$) to reduce the lookup table and determine aerosol (path) reflectance
+    \item Subtract the path reflectance from the observed reflectance of any remaining pixeles to obtain a surface reflectance estimate. This implies the likely-reasonable assumption that the aerosol attenuation of additional light reflected from the surface is negligible.
+    \item Check the percentage of pixels with that fit the conditions in Equation \ref{ddv_thresh}. If it is greater than $8\%$, return only the darkest $8\%$ of thresholded pixels in terms of their surface reflectance estimate.
+    \item If the number of remaining pixels is smaller than $8\%$, increase the a-priori AOD by $\Delta \tau=.2$, re-calculate surface reflectance, and repeat the process.
+    \item If the AOD iterates all the way up to $\tau = 3$, reject the tile because the contribution of aerosols should have pushed reflectance beyond the threshold.
+\end{enumerate}
+
+\subsection{Aerosol Optical Depth Retrieval}
+
+Despite the dependence of NIR reflectance on AOD demonstrated by Figure \ref{rural-response}, I ultimately decided to determine the ``final'' estimate for RED channel reflectance in terms of the average reflectance over all DDV pixels in 3 bands in the $.8-.9\,\si{\mu m}$ using the relationship RED$^* = 0.1$NIR, as does (Richter, 2006) \cite{richter_automatic_2006}. I believe this is an extremely weak assumption, however of all the methods I attempted it was the only one that produced consistent results among multiple granules, and avoids re-using the RED channel reflectances which have already been aggressively constrained by the Equation \ref{ddv_thresh} thresholds and by the iterative DDV pixel selection.
+
+I settled on a 10x10 pixel tile size, so once the DDV selection procedure is complete, each 100-pixel square tile in the field of regard is either rejected, or contains exactly 8 pixels that were identified as dense dark vegetation.
+
+The preliminary step for my AOD retrieval is to reduce the lookup table to the smallest cube of points surrounding the viewing angles, and to use forward-differencing interpolation to determine the effect of an increment change in $\theta$, $\theta_0$, and $\phi$ on the TOA observed reflectance (ie $\frac{\partial \rho}{\partial \phi}$) at each AOD bin supported by the lookup table. Since DESIS only has a swath width of $30\,\si{km}$ and a FOV of $4.4^\circ$, I assume that differences in viewing angles within the field of regard are negligible. As such, the modified lookup table passed to the inversion procedure is merely a 2d array associating optical depth bins with corrected reflectances.
+
+For each valid square, the following procedure is dispatched in order to retrieve a single value for the aerosol optical depth at that tile.
+
+\begin{enumerate}[itemsep=.0em]
+    \item Extract the observed reflectance of DDV-masked pixels at $.82\mu m$, $.85\mu m$, and $.88\mu m$, and let NIR$^*$ be the average reflectance between channels and pixels. I assume that this value is representative of the entire tile.
+    \item Estimate the RED$^*$ surface reflectance such that RED$^* = 0.1$ NIR$^*$.
+    \item Identify the optical depth bins with reflectances surrounding RED$^*$ and linearly interpolate between them to determine the aerosol optical depth.
+\end{enumerate}
+
+\section{Results}
+
+\subsection{Validation Comment}
+
+There are 2 ways the DESIS L2 product I used for analysis reports aerosol optical depth. First, the metadata file generated alongside the product has a single value \texttt{meanAerosolOpticalThickness} for the entire scene. Alternatively, the quality flags file of the granule contains gridded AOD values, which are scaled to unsigned integer. The DESIS L2 ATBD (M\"uller, 2015) reports in section 8.6 that the integer encoding corresponds to increments of $\Delta \tau = 0.006$, however in section 8.11 (and in the tiff file) the ATBD suggests that integers are embedded with a scaling factor of $\Delta \tau = 0.01$. As Table \ref{compare} indicates, of the granules I considered, the $0.01$ scaling factor for the quality grid produced values close to the metadata file for only granules G01 and G02. The other 3 granules have acceptable values reported in the metadata for background aerosol content, but quality grid values diverge from the metadata, and seem unreasonably high.
+
+\clearpage
+
+\subsection{Analysis}
+
+\begin{table}[h!]\label{compare}
+    \centering
+    \begin{tabular}{ c c | c c c c c}
+        Retrieval & Metric & G01 & G02 & G03 & G04 & G05 \\
+        \hline
+        \multirow{4}*{Mine} &
+        Mean & .4936 & .5186 & .4739 & .4241 & .4640 \T\\
+        &Std Dev & .088 & .052 & .104 & .121 & .111 \B\\
+        &Min & .003 & 0.151 & 0.004 & 0.006 & 0.009 \B\\
+        &Max & 0.598 & 0.697 & 0.568 & 0.583 & 0.599 \B\\
+        \hline
+        \multirow{2}*{Valid} &
+        Meta & .2779 & .246 & .3684 & .4755 & .3923 \T\\
+        &Grid & .2791 & .2495 & 2.270 & 2.378 & 2.292 \B\\
+    \end{tabular}
+    \caption{Comparison between my retrieval results and AOD values reported in the DESIS metadata, as well as the pixels in the AOD tiff grid corresponding to DDV values.}
+\end{table}
+
+\begin{figure}[h!]
+    \centering
+    \begin{center}
+        \includegraphics[width=.30\paperwidth]{figs/001-ret.png}
+        \includegraphics[width=.30\paperwidth]{figs/001-val.png}
+
+        \vspace{.2em}
+
+        \includegraphics[width=.25\paperwidth]{figs/cbar.png}
+    \end{center}
+    \caption{My aerosol optical depth retrieval results for granule G01 (left) versus the DESIS product results (right). This is the same image displayed on the left in Figure \ref{ddv_sel}, and previously characterized with histograms and a spectral response curve. Note that the color bar is deceptive in that the AOD values are independently scaled between their minimum and maximum values. For my retrieval, the color bar represents values in the range $\tau \in [0,.6]$. The aerosol optical depth reported by the file's metadata represent 3 bins at $\tau=.27$, $\tau=.28$, and $\tau=.29$ with a reported scene average of $\tau=0.279$.}
+    \label{retrieval}
+\end{figure}
+
+Table \ref{compare} and Figures \ref{retrieval} and \ref{rets-2} provide an intercomparison of my AOD values with those included alongside the L2 product. My retrieval values have very low spatial coherence, and generally tend to overestimate the aerosol loading. The lack of consistency isn't surprising since the margins used to estimate AOD are only a few thousandths of a reflectance factor, and since the standard deviation of the DDV pixels in the near infrared range is still relatively high after thresholding (per Figure \ref{ddv-response}). I was able to generate retrievals with more even distributions by inverting the lookup table with the thresholded RED reflectances directly, but this seems nonphysical to me because stringent constraints were already artificially placed on the RED reflectance during DDV pixel selection.
+
+\begin{figure}[h!]
+    \centering
+    \begin{center}
+        \makebox[\textwidth]{
+            \includegraphics[width=.34\paperwidth]{figs/003-ret.png}
+            \includegraphics[width=.34\paperwidth]{figs/003-val.png}
+        }
+
+        \vspace{.2em}
+        \makebox[\textwidth]{
+            \includegraphics[width=.34\paperwidth]{figs/004-ret.png}
+            \includegraphics[width=.34\paperwidth]{figs/004-val.png}
+        }
+
+        \vspace{.2em}
+        \makebox[\textwidth]{
+            \includegraphics[width=.34\paperwidth]{figs/005-ret.png}
+            \includegraphics[width=.34\paperwidth]{figs/005-val.png}
+        }
+    \end{center}
+    \caption{Top: G03; Middle: G04; Bottom: G05. All of the above were captured on 09/03/2020 over the Amazon.}
+    \label{rets-2}
+\end{figure}
+
+Figure \ref{rets-2} shows several more of the retrievals outlined in Table \ref{compare}. G03 and G05 suggest that the L2 product moves forward with retrievals over regions with substantial cloud shadow and sun glint, which appears to considerably affect the magnitude of their reported values. My retrievals also contain a smattering of anomalously-low AOD values, which seem to mainly correspond to areas where there is likely to be sub-pixel water, and a few regions with cloud shadow.
+
+\section{Conclusion}
+
+Aerosol optical depth retrievals from satellite radiometers provide information about the composition, spatial distribution, and radiative impact of aerosols on the climate system. Over land, the most common way to characterize aerosols is by using the known relationship between the spectral response of near-infrared and red-band reflectance over dense, dark vegetation. In this project I focused on data with relatively low aerosol loadings over the Amazon. Using the rural continental aerosol model from (Shettle, 1976) \cite{shettle_models_1976} and the SBDART radiative transfer model, I generated lookup tables for surface reflectance and TOA spectral radiance with respect to the viewing geometry, wavelengths in $.4-1\,\si{\mu m}$, and aerosol optical depths between 0 and 20 (modeled at $.55\,\si{\mu m}$). With the lookup tables, I followed a procedure similar to \cite{richter_automatic_2006} to identify 8-pixel groups of the darkest available vegetation in each valid 10x10 tile of pixels throughout the image. Finally, I used the empirical ratio of RED to NIR reflectance to estimate the RED surface reflectance, which is interpolated to an approximate AOD value following a method similar to (Kaufman, 1997) and (Richter, 2006) \cite{kaufman_operational_1997}\cite{richter_automatic_2006}.
+
+In all honesty, I'm not convinced that my retrievals provide any physically meaningul information, except perhaps some sense of the relative magnitudes of columnar aerosol attenuation for pixels within a single image. The sensitivity of the RED$^*$ surface reflectance estimate to the NIR reflectance makes retrieval values noisy, and the simplistic empirical ratio for estimating their relationship inevitably determines the magnitude of the AOD returned by the inversion. For example, changing the ratio from .1 to .09 caused the mean AOD of my retrievals to decrease by almost half.
+
+\bibliography{main}
 
 \end{document}
 
