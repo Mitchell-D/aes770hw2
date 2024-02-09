@@ -9,8 +9,7 @@ Prototype of a class system intended to provide a framework for
 specifying arbitrary embeddings of data in an infinite but discrete
 coordinate space.
 
-The IntAxis is a programmatic implementation of a mathematical
-object expanding on the concept of a Python slice. An IntAxis which
+The IntAxis expands on the concept of a Python slice. An IntAxis 
 can be specified by any 3 of 4 int values (start, stop, step, size).
 
 The CoordAxis is a child class of an IntAxis that assigns each
